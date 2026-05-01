@@ -1,0 +1,86 @@
+name: Reproduce sized deallocation crash
+
+on: [push, pull_request]
+
+jobs:
+  reproduce-crash:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "clang-18 (sized dealloc ON)"
+            cc: clang-18
+            cxx: clang++-18
+            extra_cxx_flags: ""
+          - name: "clang-18 (sized dealloc OFF - workaround)"
+            cc: clang-18
+            cxx: clang++-18
+            extra_cxx_flags: "-fno-sized-deallocation"
+
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.cc }} cmake python3-dev
+
+      - name: Configure
+        run: |
+          cmake -B build \
+            -DCMAKE_C_COMPILER=${{ matrix.cc }} \
+            -DCMAKE_CXX_COMPILER=${{ matrix.cxx }} \
+            -DCMAKE_CXX_FLAGS="${{ matrix.extra_cxx_flags }}" \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Verify sized deallocation status
+        run: |
+          echo "Checking if __cpp_sized_deallocation is defined..."
+          echo '#include <iostream>
+          int main() {
+          #ifdef __cpp_sized_deallocation
+            std::cout << "__cpp_sized_deallocation = " << __cpp_sized_deallocation << std::endl;
+          #else
+            std::cout << "__cpp_sized_deallocation is NOT defined" << std::endl;
+          #endif
+          }' | ${{ matrix.cxx }} -std=c++20 ${{ matrix.extra_cxx_flags }} -x c++ - -o /tmp/check && /tmp/check
+
+      - name: Run reproducer
+        run: |
+          cd build
+          MALLOC_CHECK_=3 python3 ../test_crash.py
+
+  reproduce-asan:
+    runs-on: ubuntu-24.04
+    name: "clang-18 + AddressSanitizer"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 cmake python3-dev
+
+      - name: Configure with ASan
+        run: |
+          cmake -B build \
+            -DCMAKE_C_COMPILER=clang-18 \
+            -DCMAKE_CXX_COMPILER=clang++-18 \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address" \
+            -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Run reproducer with ASan
+        run: |
+          cd build
+          LD_PRELOAD=$(clang++-18 -print-file-name=libclang_rt.asan-x86_64.so) \
+            ASAN_OPTIONS=detect_leaks=0 \
+            python3 ../test_crash.py
