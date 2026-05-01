@@ -52,8 +52,7 @@ jobs:
 
       - name: Run reproducer
         run: |
-          cd build
-          MALLOC_CHECK_=3 python3 ../test_crash.py
+          MALLOC_CHECK_=3 PYTHONPATH=build python3 test_crash.py
 
   reproduce-asan:
     runs-on: ubuntu-24.04
@@ -80,7 +79,7 @@ jobs:
 
       - name: Run reproducer with ASan
         run: |
-          cd build
           LD_PRELOAD=$(clang++-18 -print-file-name=libclang_rt.asan-x86_64.so) \
             ASAN_OPTIONS=detect_leaks=0 \
-            python3 ../test_crash.py
+            PYTHONPATH=build \
+            python3 test_crash.py
