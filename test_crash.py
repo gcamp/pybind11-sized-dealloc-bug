@@ -1,8 +1,11 @@
 """Reproducer for pybind11 sized deallocation bug.
 
-When __cpp_sized_deallocation is active, pybind11's call_operator_delete passes
-sizeof(PyAnimal) (the trampoline) to ::operator delete(p, s), but the object was
-allocated as Animal (much smaller). This corrupts glibc tcache metadata.
+Animal defines only operator delete(void*, size_t) (no unsized overload).
+This forces pybind11's call_operator_delete to use the has_operator_delete_size
+overload, which passes type_size as the size argument.
+
+With a trampoline (PyAnimal), type_size = sizeof(PyAnimal) but the factory
+allocates sizeof(Animal). The custom operator delete detects the mismatch.
 """
 
 import gc
@@ -12,16 +15,19 @@ import crash_module
 
 def main():
     print(f"Python {sys.version}", flush=True)
-    for cycle in range(500):
-        objects = [crash_module.Animal() for _ in range(200)]
-        for i, o in enumerate(objects):
-            o.id = i
+
+    obj = crash_module.Animal()
+    print(f"Created Animal with value={obj.value}", flush=True)
+    del obj
+    gc.collect()
+    print("First object deallocated — if we got here, bug was NOT triggered")
+
+    for cycle in range(200):
+        objects = [crash_module.Animal() for _ in range(100)]
         del objects
         gc.collect()
-        if (cycle + 1) % 100 == 0:
-            print(f"Cycle {cycle + 1}/500 completed", flush=True)
 
-    print("All cycles completed without crash (bug may not have triggered)")
+    print("All cycles completed — bug was NOT triggered")
 
 
 if __name__ == "__main__":
